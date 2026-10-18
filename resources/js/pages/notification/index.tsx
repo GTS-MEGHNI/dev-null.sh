@@ -513,7 +513,7 @@ function NotificationGroupItem({
     const grouped = notification.event_count > 1;
     const noun = groupNoun(notification);
 
-    const load = async (next: string | null = null, prepend = false) => {
+    const load = async (next: string | null = null) => {
         setLoading(true);
         setFailed(false);
         const slow = window.setTimeout(() => setIsSlow(true), 300);
@@ -525,21 +525,10 @@ function NotificationGroupItem({
             if (!response.ok) throw new Error('Unable to load activity');
             const data =
                 (await response.json()) as CursorPaginated<Notification>;
-            if (prepend) {
-                setItems((previous) => {
-                    const seen = new Set(previous.map((item) => item.id));
-
-                    return [
-                        ...data.data.filter((item) => !seen.has(item.id)),
-                        ...previous,
-                    ];
-                });
-            } else {
-                setItems((previous) =>
-                    next ? [...previous, ...data.data] : data.data,
-                );
-                setCursor(data.next_cursor);
-            }
+            setItems((previous) =>
+                next ? [...previous, ...data.data] : data.data,
+            );
+            setCursor(data.next_cursor);
         } catch {
             setFailed(true);
         } finally {
@@ -549,16 +538,21 @@ function NotificationGroupItem({
         }
     };
 
-    // A poll can change this group. An open list stays open: new events go on top, anything else reloads it.
-    const eventCount = useRef(notification.event_count);
-    const onEventCountChange = useEffectEvent(() => {
-        const grew = notification.event_count > eventCount.current;
-        eventCount.current = notification.event_count;
+    // A poll can change this group. New events are always the newest, so the latest id and the count change whenever its events do.
+    // An open list stays open and reloads from the top, a list down to one event closes, and a closed list reloads when it opens.
+    const version = `${notification.id}:${notification.event_count}`;
+    const loadedVersion = useRef(version);
+    const onVersionChange = useEffectEvent(() => {
+        loadedVersion.current = version;
 
-        if (open && items.length > 0) {
-            void load(null, grew);
+        if (open && grouped) {
+            void load();
 
             return;
+        }
+
+        if (!grouped) {
+            setOpen(false);
         }
 
         setItems([]);
@@ -566,10 +560,10 @@ function NotificationGroupItem({
     });
 
     useEffect(() => {
-        if (eventCount.current !== notification.event_count) {
-            onEventCountChange();
+        if (loadedVersion.current !== version) {
+            onVersionChange();
         }
-    }, [notification.event_count]);
+    }, [version]);
 
     return (
         <article
